@@ -1,4 +1,8 @@
 #!/bin/bash
+echo '*** Install bird and wireguard'
+apt update
+apt upgrade -y
+apt install -y wireguard bird2
 
 echo '*** Backing old bird config file...'
 mv /etc/bird/bird.conf /etc/bird/bird.conf.bak

@@ -17,7 +17,7 @@ read -p 'Peer Dynamic IP: [y/N] '           PEER_DYNAMIC_IP
 read -p 'Peer WireGuard Public Key: '       PEER_WIREGUARD_PUBLIC_KEY
 read -p 'Peer WireGuard Preshared Key: '    PEER_WIREGUARD_PRESHARED_KEY
 
-OWN_LINK_LOCAL="fe80::23"
+OWN_LINK_LOCAL="fe80::2023"
 
 WIREGUARD_CONFIG_FILE="/etc/wireguard/dn42-${PEER_ASN:0-4:4}.conf"
 BIRD_CONFIG_FILE="/etc/bird/peers/dn42-${PEER_ASN:0-4:4}.conf"
