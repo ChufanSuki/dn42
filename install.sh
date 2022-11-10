@@ -1,39 +1,56 @@
 #!/bin/bash
 
-cat <<'EOF' >> /etc/sysctl.conf
-net.ipv4.conf.all.rp_filter=0
-net.ipv4.conf.default.rp_filter=0
-net.ipv4.conf.all.forwarding=1
-net.ipv6.conf.all.forwarding=1
-EOF
+echo '*** Backing old bird config file...'
+mv /etc/bird/bird.conf /etc/bird/bird.conf.bak
+
+echo '*** Downloading config files...'
+wget -4 -O /tmp/bird.conf https://raw.githubusercontent.com/ChufanSuki/dn42/main/bird.conf && mv -f /tmp/bird.conf /etc/bird/bird.conf
+wget -4 -O /tmp/ibgp.conf https://raw.githubusercontent.com/ChufanSuki/dn42/main/ibgp.conf && mv -f /tmp/ibgp.conf /etc/bird/ibgp.conf
+wget -4 -O /tmp/dn42_roa.conf https://dn42.burble.com/roa/dn42_roa_bird2_4.conf && mv -f /tmp/dn42_roa.conf /etc/bird/dn42_roa.conf
+wget -4 -O /tmp/dn42_roa_v6.conf https://dn42.burble.com/roa/dn42_roa_bird2_6.conf && mv -f /tmp/dn42_roa_v6.conf /etc/bird/dn42_roa_v6.conf
+wget -4 -O ~/peer.sh https://raw.githubusercontent.com/ChufanSuki/dn42/main/peer.sh
+wget -4 -O ~/remove-peer.sh https://raw.githubusercontent.com/ChufanSuki/dn42/main/remove-peer.sh
+
+echo '*** Setting bird configs...'
+ip address
+read -p 'IPv4 Address: ' ownip
+read -p 'IPv6 Address: ' ownipv6
+read -p 'Confederation ASN: ' confederationas
+
+echo "define OWNAS           = 4242422023;
+define OWNIP           = $ownip;
+define OWNIPv6         = $ownipv6;
+define CONFEDERATIONAS = $confederationas;
+" > /etc/bird/variables.conf
+
+echo '*** Write crontab configs to /etc/crontab ...'
+
+echo '# ChufanSuki DN42 Network
+0 * * * * root wget -4 -q -O /tmp/bird.conf https://raw.githubusercontent.com/ChufanSuki/dn42/main/bird.conf && mv -f /tmp/bird.conf /etc/bird/bird.conf && birdc configure
+0 * * * * root wget -4 -q -O /tmp/ibgp.conf https://raw.githubusercontent.com/ChufanSuki/dn42/main/ibgp.conf && mv -f /tmp/ibgp.conf /etc/bird/ibgp.conf && birdc configure
+0 * * * * root wget -4 -q -O /tmp/dn42_roa.conf https://dn42.burble.com/roa/dn42_roa_bird2_4.conf && mv -f /tmp/dn42_roa.conf /etc/bird/dn42_roa.conf && birdc configure
+0 * * * * root wget -4 -q -O /tmp/dn42_roa_v6.conf https://dn42.burble.com/roa/dn42_roa_bird2_6.conf && mv -f /tmp/dn42_roa_v6.conf /etc/bird/dn42_roa_v6.conf && birdc configure
+0 * * * * root wget -4 -q -O /tmp/peer.sh https://raw.githubusercontent.com/ChufanSuki/dn42/main/peer.sh && mv -f /tmp/peer.sh /root/peer.sh
+0 * * * * root wget -4 -q -O /tmp/remove-peer.sh https://raw.githubusercontent.com/ChufanSuki/dn42/main/remove-peer.sh && mv /tmp/remove-peer.sh /root/remove-peer.sh
+' >> /etc/crontab
+systemctl restart cron
+systemctl status cron
+
+echo '*** Updating System Networking Configurations...'
+echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+echo 'net.ipv4.conf.default.rp_filter=0' >> /etc/sysctl.conf
+echo 'net.ipv4.conf.all.rp_filter=0' >> /etc/sysctl.conf
+echo 'net.ipv6.conf.default.forwarding=1' >> /etc/sysctl.conf
+echo 'net.ipv6.conf.all.forwarding=1' >> /etc/sysctl.conf
 sysctl -p
-apt update
-apt upgrade -y
-apt install -y wireguard bird2
-[ "$1" == "-o" ] && {
-	opkg update
-	opkg install wireguard bird2c
-	echo '#!/bin/sh' > /etc/hotplug.d/iface/40-dn42-wg
-	echo 'include "/etc/bird/bird.conf";' > /etc/bird.conf
-	grep /etc/hotplug.d/iface/40-dn42-wg /etc/sysupgrade.conf || \
-		echo /etc/hotplug.d/iface/40-dn42-wg >> /etc/sysupgrade.conf
-	grep /etc/bird/ /etc/sysupgrade.conf || echo /etc/bird/ >> /etc/sysupgrade.conf
-	grep /etc/bird.conf /etc/sysupgrade.conf || echo /etc/bird.conf >> /etc/sysupgrade.conf
-}
-mkdir -p /etc/wireguard
-pushd /etc/wireguard
-[ -f private ] || wg genkey | tee private | wg pubkey | tee public
-popd
+
+echo '*** Creating /etc/bird/peers/ folder...'
 mkdir -p /etc/bird/peers
-cp bird.conf /etc/bird/bird.conf
-read -p "Enter DN42 IPv4: " CONFNET4
-read -p "Enter DN42 IPv6: " CONFNET6
-sed -i "s/CONFNET4/${CONFNET4}/" /etc/bird/bird.conf
-sed -i "s/CONFNET6/${CONFNET6}/" /etc/bird/bird.conf
-. roa.sh $1
-service bird restart
-[ "$1" == "-o" ] && birdc down ; /etc/init.d/bird start
-sleep 2
-birdc show status
-birdc show protocols
-birdc
+
+echo '*** Reconfiguring BIRD...'
+birdc configure
+
+echo '*** All done!'
+echo ''
+
+exit 0

@@ -1,82 +1,94 @@
 #!/bin/bash
 
-[ "$1" == "-b" -o "$2" == "-b" ] && BATCH=true || BATCH=false
-pause () {
-	$BATCH && return
-	echo
-	echo -n "$1 "
-	echo "Press ENTER to proceed or Control-C to abort."
-	read
-}
-echo
-echo "This is a Peer Automaton."
-echo
+echo '*** Informations'
 
-read -p "Choose a short name for this peer: " PEER_NAME
-read -p "Enter peer ASN (e.g. 4242420817): " PEER_ASN
-read -p "Enter peer DN42 IPv4 address: " PEER_IP4
-read -p "Enter peer DN42 IPv6 address: " PEER_IP6
-read -p "Enter peer WireGuard endpoint: " PEER_ENDPOINT
-read -p "Enter peer WireGuard pubkey: " PEER_PUBKEY
-read -p "Enter local DN42 IPv4 address: " YOUR_IP4
-read -p "Enter local DN42 IPv6 address: " YOUR_IP6
-echo
-echo "Your AS <---> AS${PEER_ASN}"
-echo "${YOUR_IP4} <---> ${PEER_IP4}"
-echo "${YOUR_IP6} <---> ${PEER_IP6}"
-echo "Peer endpoint: ${PEER_ENDPOINT}"
-echo "Peer pubkey: ${PEER_PUBKEY}"
-pause "Is that right?"
+ip a
 
-[ "$1" == "-o" -o "$2" == "-o" ] || {
-mkdir -p /etc/wireguard/
-cd /etc/wireguard/
-cat <<EOF > dn42_${PEER_NAME}.conf
+read -p 'Wireguard Private Key: '           WIREGUARD_PRIVATE_KEY
+read -p 'DN42 IPv4 Address: '               OWN_IP
+read -p 'DN42 IPv6 Address: '               OWN_IPv6
+read -p 'Peer ASN: '                        PEER_ASN
+read -p 'Use Link-local IP Address: [Y/n] ' USE_LINK_LOCAL
+read -p 'Peer DN42 IPv4 Address: '          PEER_IP
+read -p 'Peer DN42 IPv6 Address: '          PEER_IPv6
+[[ $USE_LINK_LOCAL =~ ^[Nn](o)?$ ]] || read -p 'Peer Link-local Address: ' PEER_LINK_LOCAL
+read -p 'Peer WireGuard EndPoint: '         PEER_WIREGUARD_ENDPOINT
+read -p 'Peer Dynamic IP: [y/N] '           PEER_DYNAMIC_IP
+read -p 'Peer WireGuard Public Key: '       PEER_WIREGUARD_PUBLIC_KEY
+read -p 'Peer WireGuard Preshared Key: '    PEER_WIREGUARD_PRESHARED_KEY
+
+OWN_LINK_LOCAL="fe80::23"
+
+WIREGUARD_CONFIG_FILE="/etc/wireguard/dn42-${PEER_ASN:0-4:4}.conf"
+BIRD_CONFIG_FILE="/etc/bird/peers/dn42-${PEER_ASN:0-4:4}.conf"
+
+echo '*** Writing WireGuard configs...'
+echo "# Peer dn42-${PEER_ASN:0-4:4}
 [Interface]
-ListenPort = 2${PEER_ASN:(-4)}
-PrivateKey = `cat private`
-Address = ${YOUR_IP4}/32
-Address = ${YOUR_IP6}/128
-Table = off
-PostUp = ip -4 route add dev dn42_${PEER_NAME} ${PEER_IP4}/32
-PostUp = ip -6 route add dev dn42_${PEER_NAME} ${PEER_IP6}/128
+PrivateKey = ${WIREGUARD_PRIVATE_KEY}
+ListenPort = 4${PEER_ASN:0-4:4}
+PostUp     = ip addr add ${OWN_LINK_LOCAL}/64 dev %i" >> $WIREGUARD_CONFIG_FILE
+
+if [[ $PEER_IPv6 != "" ]]; then
+    echo "PostUp     = ip addr add ${OWN_IPv6}/128 peer ${PEER_IPv6}/128 dev %i" >> $WIREGUARD_CONFIG_FILE
+fi
+
+if [[ $PEER_IP != "" ]]; then
+    echo "PostUp     = ip addr add ${OWN_IP}/32 peer ${PEER_IP}/32 dev %i" >> $WIREGUARD_CONFIG_FILE
+fi
+
+echo "Table      = off
 
 [Peer]
-PublicKey = ${PEER_PUBKEY}
-Endpoint = ${PEER_ENDPOINT}
+PublicKey  = ${PEER_WIREGUARD_PUBLIC_KEY}" >> $WIREGUARD_CONFIG_FILE
+
+if [[ $PEER_WIREGUARD_PRESHARED_KEY != "" ]]; then
+    echo "PresharedKey = ${PEER_WIREGUARD_PRESHARED_KEY}" >> $WIREGUARD_CONFIG_FILE
+fi
+
+if [[ $PEER_WIREGUARD_ENDPOINT != "" ]]; then
+    echo "Endpoint   = ${PEER_WIREGUARD_ENDPOINT}" >> $WIREGUARD_CONFIG_FILE
+fi
+
+echo "PersistentKeepalive = 25
 AllowedIPs = 0.0.0.0/0, ::/0
-PersistentKeepalive = 30
-EOF
-$BATCH || vi dn42_${PEER_NAME}.conf || exit
-chmod 0600 dn42_${PEER_NAME}.conf
-wg-quick down dn42_${PEER_NAME}
-wg-quick up dn42_${PEER_NAME} && systemctl enable wg-quick@dn42_${PEER_NAME}
-sleep 2
-wg show dn42_${PEER_NAME}
-pause
-}
+" >> $WIREGUARD_CONFIG_FILE
 
-[ "$1" == "-o" -o "$2" == "-o" ] && {
-	sed -i "/dev dn42_${PEER_NAME} /d" /etc/hotplug.d/iface/40-dn42-wg
-	cat <<EOF >> /etc/hotplug.d/iface/40-dn42-wg
-[ "\$ACTION" = "ifup" -a "\$INTERFACE" = "dn42_${PEER_NAME}" ] && ip -4 route add dev dn42_${PEER_NAME} ${PEER_IP4}/32
-[ "\$ACTION" = "ifup" -a "\$INTERFACE" = "dn42_${PEER_NAME}" ] && ip -6 route add dev dn42_${PEER_NAME} ${PEER_IP6}/128
-EOF
-	$BATCH || vi /etc/hotplug.d/iface/40-dn42-wg || exit
-}
+systemctl enable --now wg-quick@dn42-${PEER_ASN:0-4:4}
+echo -e "$(SYSTEMD_COLORS=1 systemctl status wg-quick@dn42-${PEER_ASN:0-4:4})"
 
-mkdir -p /etc/bird/peers/
-cd /etc/bird/peers/
-cat <<EOF > dn42_${PEER_NAME}.conf
-protocol bgp ${PEER_NAME}4 from dn42 {
-    neighbor ${PEER_IP4} as ${PEER_ASN};
-}
-protocol bgp ${PEER_NAME}6 from dn42 {
-    neighbor ${PEER_IP6} as ${PEER_ASN};
-}
-EOF
-$BATCH || vi dn42_${PEER_NAME}.conf || exit
-birdc configure
-sleep 5
-birdc show protocols
-$BATCH || birdc
+if [[ $PEER_DYNAMIC_IP =~ ^[Yy](es)?$ ]]; then
+    echo "* * * * * root wg set dn42-${PEER_ASN:0-4:4} peer ${PEER_WIREGUARD_PUBLIC_KEY} endpoint ${PEER_WIREGUARD_ENDPOINT}" >> /etc/crontab
+fi
+
+echo '*** Sleep for 10 seconds.'
+sleep 10
+
+echo '*** WireGuard tunnel details:'
+wg show dn42-${PEER_ASN:0-4:4}
+
+echo '*** Writing BIRD configs...'
+echo "# Peer dn42-${PEER_ASN:0-4:4}
+protocol bgp dn42_${PEER_ASN:0-4:4} from dnpeers {" > $BIRD_CONFIG_FILE
+
+if [[ $USE_LINK_LOCAL =~ ^[Nn](o)?$ ]]; then
+    echo "    neighbor ${PEER_IPv6} as ${PEER_ASN};" >> $BIRD_CONFIG_FILE
+else
+    echo "    neighbor ${PEER_LINK_LOCAL} % 'dn42-${PEER_ASN:0-4:4}' as ${PEER_ASN};" >> $BIRD_CONFIG_FILE
+    echo "    source address ${OWN_LINK_LOCAL};" >> $BIRD_CONFIG_FILE
+fi
+
+echo "}" >> $BIRD_CONFIG_FILE
+
+
+birdc c
+
+birdc s p dn42_${PEER_ASN:0-4:4}
+
+echo '*** Sleep for 10 seconds.'
+sleep 10
+
+echo '*** BGP session details:'
+birdc s p a dn42_${PEER_ASN:0-4:4}
+
+exit 0
